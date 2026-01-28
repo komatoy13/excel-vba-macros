@@ -1,186 +1,232 @@
-# 関数一覧（functions.md / Version 1.0）
+# 関数・イベント仕様書（VBA）
 
-このドキュメントは、日報記録システムに含まれる  
-「関数・Sub・ロジックの一覧」と「役割」「依存関係」をまとめたものです。
+## 1. 全体構成
 
-GitHub に保存された .bas ファイルと合わせて参照することで、  
-コードの整合性を保ち、拡張時の事故を防ぐ目的で作成しています。
+このファイルでは、Input シートおよびブック全体で使用する  
+VBA のイベント・関数・サブルーチンの役割と仕様を定義する。
 
----
+主な構成要素は以下の通り：
 
-# 1. モジュール構成（現行）
-modules/ Module_DB.bas Module_Input.bas Module_Product.bas Module_HalfProduct.bas Module_Time.bas Module_Yield.bas Module_Utils.bas Module_History.bas
-classes/ （今は空）
-forms/ （今は空）
-sheets/ Sheet1.cls Sheet2.cls ThisWorkbook.cls
+- ThisWorkbook モジュール  
+  - Workbook_Open  
 
----
-
-# 2. 関数一覧（モジュール別）
-
-以下は **現時点のコード構成を前提にした一覧** です。  
-今後コードが増えたら Version を更新していきます。
+- Input シートモジュール  
+  - Worksheet_Change  
+  - IsProductCode  
+  - FillProduct  
+  - FillHalfProduct  
+  - WriteHalfProduct  
+  - SetB5Appearance  
+  - SetDropdowns  
 
 ---
 
-## ■ Module_DB（DB 登録・修正・未完了管理）
+## 2. ThisWorkbook モジュール
 
-### ● Sub RegisterToDB()
-- **役割**：Input シートの内容を DB に新規登録する  
-- **呼び出し元**：登録ボタン  
-- **依存**：  
-  - BuildProcessString（商品工程）  
-  - BuildWorkerString（作業者）  
-  - EvaluateYield（歩留まり）  
-  - EvaluateTime（主作業時間）  
+### 2.1 Workbook_Open
 
----
+**役割**  
+- ブックを開いたときに、Input シートの作業日（B2）に今日の日付を設定する。
 
-### ● Sub RegisterIncomplete()
-- **役割**：未完了フラグを付けて DB に登録  
-- **呼び出し元**：未完了登録ボタン  
-- **依存**：RegisterToDB の一部ロジック
+**仕様**  
+- 対象シート：Input  
+- 対象セル：B2  
+- 設定値：Date（システム日付）
+
+**擬似コード**
+
+- Sheets("Input").Range("B2") に Date を代入する。
 
 ---
 
-### ● Sub RegisterCorrection()
-- **役割**：修正モードで DB の既存行を上書き  
-- **呼び出し元**：修正登録ボタン  
-- **依存**：Z1（DB 行番号）
+## 3. Input シートモジュール
+
+### 3.1 Worksheet_Change
+
+**トリガー**  
+- Input シートのセルが変更されたとき  
+- 対象セル：B4（作業コード）のみ
+
+**役割**  
+1. 作業コード（B4）の変更を検知する  
+2. 作業区分（B3）を自動判定する  
+3. B5〜B9 を製品／半製品に応じて自動入力する  
+4. B5・B9 のロック／色など UI を制御する  
+5. 大分類・中分類のプルダウンを切り替える  
+
+**処理の流れ**
+
+1. Target が B4 以外なら何もしない  
+2. B4 が空欄なら何もしない  
+3. Application.EnableEvents = False にして再帰呼び出しを防止  
+4. B4 の値を code として取得  
+5. code が「製品コード」かどうかを IsProductCode で判定  
+6. 判定結果に応じて B3 に「製品」または「半製品」を設定  
+7. SetB5Appearance を呼び出し、B5・B9 の見た目とロック状態を更新  
+8. B3 の値に応じて FillProduct または FillHalfProduct を呼び出す  
+9. SetDropdowns を呼び出し、B6・B7 のプルダウンを更新  
+10. Application.EnableEvents = True に戻す  
 
 ---
 
-### ● Function FindLastRow()
-- **役割**：DB の最終行を取得  
-- **呼び出し元**：RegisterToDB など  
-- **依存**：なし
+### 3.2 IsProductCode
+
+**役割**  
+- 渡された文字列が「製品コード」かどうかを判定する。
+
+**仕様**  
+- 引数：code（String）  
+- 戻り値：Boolean  
+- 判定条件：  
+  - 長さが 4 文字  
+  - ハイフンを含まない  
 
 ---
 
-## ■ Module_Input（入力制御・切替・復元）
+### 3.3 FillProduct
 
-### ● Sub SwitchMode()
-- **役割**：商品／半製品の入力項目を切り替える  
-- **呼び出し元**：B3 の変更イベント  
-- **依存**：なし
+**役割**  
+- 製品コードに対して、T商品名テーブルから情報を取得し、Input シートに反映する。
 
----
+**仕様**
 
-### ● Sub RestoreFromHistory()
-- **役割**：履歴から Input に復元  
-- **呼び出し元**：修正ボタン  
-- **依存**：History モジュール
-
----
-
-### ● Sub RestoreFromIncomplete()
-- **役割**：未完了呼び出し  
-- **呼び出し元**：未完了一覧のボタン  
-- **依存**：DB 行番号
+- 引数：code（String）  
+- 処理内容：  
+  1. T商品名シートの ListObject「T商品名」を取得  
+  2. テーブルの「コード」列と code が一致する行を検索  
+  3. 見つからなければメッセージを表示して終了  
+  4. 見つかった場合、以下のように Input シートへ書き込む  
+     - B5：空欄  
+     - B6：中分類  
+     - B7：小分類  
+     - B8：空欄  
+     - B9：商品名  
 
 ---
 
-## ■ Module_Product（商品ロジック）
+### 3.4 FillHalfProduct
 
-### ● Function BuildProcessString()
-- **役割**：商品工程チェックボックスを文字列化  
-- **呼び出し元**：RegisterToDB, SaveHistory  
-- **依存**：なし
+**役割**  
+- 半製品コードに対して、ＴＤＳテーブルから情報を取得し、Input シートに反映する。
 
----
+**仕様**
 
-### ● Function BuildWorkerString()
-- **役割**：作業者チェックボックスを文字列化  
-- **呼び出し元**：RegisterToDB, SaveHistory  
-- **依存**：なし
+- 引数：code（String）  
+- 処理内容：  
 
----
+1. ＴＤＳシートの ListObject「ＴＤＳ」を取得  
 
-## ■ Module_HalfProduct（半製品ロジック）
+2. 通常パターンの検索  
+   - テーブルの「記号」列と code が一致する行を検索  
+   - 見つかった場合：  
+     - 工程名：行の「工程」列の値  
+     - WriteHalfProduct を呼び出し、工程名を渡して終了  
 
-### ● Function EvaluateYield()
-- **役割**：歩留まり計算  
-- **呼び出し元**：RegisterToDB  
-- **依存**：数量・枚数・平均重量
+3. イレギュラーパターンの判定  
+   - code の長さが 9 文字  
+   - 2文字目がハイフン  
+   - 条件を満たす場合：  
+     - 先頭1文字を工程コード engCode とする  
+     - 3文字目以降を baseCode とする  
 
----
+4. 工程コードから工程名を決定  
+   - f → 成型  
+   - c → 検品  
+   - h → 包装糖  
+   - k → カット・検品  
+   - 上記以外 → 不明  
 
-### ● Function EvaluateTime()
-- **役割**：主作業時間の標準比較  
-- **呼び出し元**：RegisterToDB  
-- **依存**：標準時間テーブル（予定）
+5. baseCode と「記号」列が一致する行を検索  
+   - 見つかった場合：  
+     - WriteHalfProduct を呼び出し、工程名を渡して終了  
 
----
-
-## ■ Module_Time（時間関連）
-
-### ● Function FormatTime()
-- **役割**：時間を mm:ss 形式に整形  
-- **呼び出し元**：履歴保存など  
-- **依存**：なし
-
----
-
-## ■ Module_Yield（歩留まり関連）
-
-### ● Function FormatYield()
-- **役割**：歩留まりを「95%」形式に整形  
-- **呼び出し元**：履歴保存  
-- **依存**：なし
+6. どちらのパターンでも見つからなかった場合  
+   - メッセージを表示して終了  
 
 ---
 
-## ■ Module_Utils（共通処理）
+### 3.5 WriteHalfProduct
 
-### ● Function Nz()
-- **役割**：Null/空欄を 0 に変換  
-- **呼び出し元**：全体  
-- **依存**：なし
+**役割**  
+- 半製品の情報を Input シートに書き込む共通処理。
 
----
+**仕様**
 
-### ● Function SafeValue()
-- **役割**：エラー値を安全に数値化  
-- **呼び出し元**：DB登録  
-- **依存**：なし
+- 引数：  
+  - r：ListRow（ＴＤＳテーブルの対象行）  
+  - engName：工程名（String）  
 
----
+- 処理内容：  
+  1. r から以下の値を取得  
+     - 形状  
+     - 色  
+     - 種類  
 
-## ■ Module_History（履歴スライド）
+  2. 工程が「プリント」の場合の例外処理  
+     - 中分類（B7）：文字列「プリント」  
+     - 詳分類（B8）：色  
 
-### ● Sub SaveHistory()
-- **役割**：最新入力を F列に保存し、G〜O をスライド  
-- **呼び出し元**：登録時  
-- **依存**：  
-  - BuildProcessString  
-  - BuildWorkerString  
-  - FormatYield  
-  - FormatTime  
+  3. 通常の場合  
+     - 中分類（B7）：色  
+     - 詳分類（B8）：空欄  
 
----
-
-### ● Sub SlideHistory()
-- **役割**：履歴を右にずらす  
-- **呼び出し元**：SaveHistory  
-- **依存**：なし
+  4. Input シートへの書き込み  
+     - B5：工程名  
+     - B6：形状  
+     - B7：中分類  
+     - B8：詳分類  
+     - B9：種類  
 
 ---
 
-# 3. 依存関係マップ（簡易）
-RegisterToDB ├─ BuildProcessString ├─ BuildWorkerString ├─ EvaluateYield（半製品） ├─ EvaluateTime（半製品） └─ SaveHistory ├─ BuildProcessString ├─ BuildWorkerString ├─ FormatYield └─ FormatTime
+### 3.6 SetB5Appearance
+
+**役割**  
+- B3（作業区分）に応じて、B5（半製品工程）と B9（名称）の見た目とロック状態を制御する。
+
+**仕様**
+
+- B5  
+  - 製品の場合  
+    - 値：空欄  
+    - 背景色：薄いグレー  
+    - 文字色：薄いグレー  
+    - Locked = True  
+  - 半製品の場合  
+    - 背景色：白  
+    - 文字色：黒  
+    - Locked = True（自動入力のみで手入力不可）  
+
+- B9  
+  - 常に Locked = True  
+  - 背景色はやや薄いグレーまたは白  
+  - 自動入力のみ  
 
 ---
 
-# 4. 今後追加予定の関数（メモ）
+### 3.7 SetDropdowns
 
-- ValidateInput（入力チェック）
-- SearchDB（検索機能）
-- ExportCSV（外部出力）
-- ImportMaster（マスタ読込）
-- StandardTimeLookup（標準時間テーブル）
+**役割**  
+- B3（作業区分）に応じて、B6（大分類）・B7（中分類）のプルダウン内容を切り替える。
+
+**仕様**
+
+- 製品の場合  
+  - B6：T商品名テーブルの「中分類」列をリストとして設定  
+  - B7：T商品名テーブルの「小分類」列をリストとして設定  
+
+- 半製品の場合  
+  - B6：ＴＤＳテーブルの「形状」列をリストとして設定  
+  - B7：ＴＤＳテーブルの「色」列をリストとして設定  
+
+- B8  
+  - データ検証は削除（プルダウンなし）  
 
 ---
 
-# 5. 更新履歴
+## 4. 今後追加が想定される関数
 
-- Version 1.0：初版作成（2026-01-28）
+- 製品／半製品で背景色を変えるための UI 制御関数  
+- 入力ガイドを表示するためのヘルプ関数  
+- 作業コードの候補を提示する補完関数  
+- DB 登録処理（別モジュール）との連携関数
